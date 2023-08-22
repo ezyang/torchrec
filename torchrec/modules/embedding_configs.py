@@ -88,7 +88,7 @@ def dtype_to_data_type(dtype: torch.dtype) -> DataType:
 
 def pooling_type_to_pooling_mode(pooling_type: PoolingType) -> PoolingMode:
     if pooling_type.value == PoolingType.SUM.value:
-        return PoolingMode.SUM
+        return 0
     elif pooling_type.value == PoolingType.MEAN.value:
         return PoolingMode.MEAN
     elif pooling_type.value == PoolingType.NONE.value:

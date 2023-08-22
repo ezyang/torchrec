@@ -159,6 +159,132 @@ def train(
     #for _ in tqdm(range(int(num_iterations)), mininterval=5.0):
     #    train_pipeline.progress(train_iterator)
 
+import torch.library
+fbgemm_meta_lib = torch.library.Library("fbgemm", "IMPL", "Meta")
+
+def register_meta(op_name, overload_name="default"):
+    def wrapper(fn):
+        fbgemm_meta_lib.impl(getattr(getattr(torch.ops.fbgemm, op_name), overload_name), fn)
+        return fn
+
+    return wrapper
+
+
+from torch._prims_common import check
+from fbgemm_gpu.split_embedding_configs import SparseType
+from fbgemm_gpu.split_table_batched_embeddings_ops_common import PoolingMode
+
+def getScalarType(output_dtype: int):
+    return SparseType.from_int(output_dtype).as_dtype()
+
+@register_meta("bounds_check_indices")
+def bounds_check_indices_meta(rows_per_table, indices, offsets, bounds_check_mode, warning, weights=None, B_offsets=None, max_B=-1):
+    pass
+
+@register_meta("split_embedding_codegen_forward_cpu")
+def split_embedding_codegen_forward_cpu_meta(weights, weights_offsets, D_offsets, total_D, hash_size_cumsum, indices, offsets, pooling_mode, indice_weights, output_dtype):
+    T = D_offsets.numel() - 1
+    check(T > 0, lambda: f"expect T > 0, but got {T} (from D_offsets.size() = {D_offsets.size()})")
+    B = (offsets.size(0) - 1) // T
+    check(B >= 0, lambda: f"expect B >= 0, but got {B} (from {offsets.size(0)})")
+
+    dt = getScalarType(output_dtype)
+    output = weights.new_empty((B, total_D), dtype=dt)
+
+    assert indice_weights is None or indice_weights.dtype != torch.float16
+
+    return output
+
+"""
+# this is the cpu one
+@register_meta("split_embedding_codegen_lookup_rowwise_adagrad_function")
+def split_embedding_codegen_lookup_rowwise_adagrad_function_meta(host_weights, weights_placements, weights_offsets, D_offsets, total_D, max_D, hash_size_cumsum, total_hash_size_bits, indices, offsets, pooling_mode, indice_weights, feature_requires_grad, gradient_clipping, max_gradient, stochastic_rounding, momentum1_host, momentum1_placements, momentum1_offsets, eps = 0, learning_rate = 0, weight_decay = 0.0, weight_decay_mode = 0, max_norm = 0.0, output_dtype=0):
+    return split_embedding_codegen_forward_cpu_meta(host_weights, weights_offsets, D_offsets, total_D, hash_size_cumsum, indices, offsets, pooling_mode, indice_weights, output_dtype)
+"""
+
+kINT8QparamsBytes = 8
+
+@register_meta("split_embedding_codegen_lookup_rowwise_adagrad_function")
+def split_embedding_codegen_lookup_rowwise_adagrad_function_meta(
+    placeholder_autograd_tensor,
+    dev_weights, uvm_weights,
+    lxu_cache_weights,
+    weights_placements,
+    weights_offsets,
+    D_offsets,
+    total_D,
+    max_D,
+    hash_size_cumsum,
+    total_hash_size_bits,
+    indices,
+    offsets,
+    pooling_mode,
+    indice_weights,
+    feature_requires_grad,
+    lxu_cache_locations,
+    gradient_clipping,
+    max_gradient,
+    stochastic_rounding,
+    momentum1_dev,
+    momentum1_uvm,
+    momentum1_placements,
+    momentum1_offsets,
+    eps = 0,
+    learning_rate = 0,
+    weight_decay = 0.0,
+    weight_decay_mode = 0,
+    max_norm = 0.0,
+    output_dtype=0,
+    B_offsets=None,
+    vbe_output_offsets_feature_rank=None,
+    vbe_B_offsets_rank_per_feature=None,
+    max_B=-1,
+    max_B_feature_rank=-1,
+    vbe_output_size=-1,
+    is_experimental=False,
+):
+    if B_offsets is not None:
+        assert False
+    else:
+        if pooling_mode is PoolingMode.NONE:
+            # SplitNoBagLookupFunction_rowwise_adagrad_Op
+            # -> split_embedding_nobag_codegen_forward_unweighted_cuda
+            total_L = indices.numel()
+            T = weights_offsets.numel()
+            check(T > 0, lambda: "T > 0")
+            total_B = offsets.size(0) - 1
+            B = total_B // T
+            check(B >= 0, lambda: "B >= 0")
+            D = max_D  # per SplitNoBagLookupFunction_rowwise_adagrad_Op
+            check(D > 0, lambda: "D > 0")
+            check(D % 4 == 0, lambda: "D % 4 == 0")
+            assert SparseType.from_int(output_dtype) in (SparseType.FP32, SparseType.FP16, SparseType.BF16, SparseType.INT8)
+            adjusted_D = D
+            if output_dtype == SparseType.INT8:
+                adjusted_D += T * kINT8QparamsBytes
+            output = dev_weights.new_empty((total_L, adjusted_D), dtype=getScalarType(output_dtype))
+            return output
+        else:
+            # SplitLookupFunction_rowwise_adagrad_Op
+            if indice_weights is None:
+                # split_embedding_codegen_forward_unweighted_cuda
+                T = weights_offsets.numel()
+                check(T > 0, lambda: "T > 0")
+                total_B = offsets.size(0) - 1
+                B = total_B // T
+                check(B >= 0, lambda: "B >= 0")
+                check(total_D >= 0, lambda: "")
+                check(total_D % 4 == 0, lambda: "")
+                check(max_D <= 1024, lambda: "")
+                assert SparseType.from_int(output_dtype) in (SparseType.FP32, SparseType.FP16, SparseType.BF16, SparseType.INT8)
+                total_adjusted_D = total_D
+                if output_dtype == SparseType.INT8:
+                    total_adjusted_D += T * kINT8QparamsBytes
+                output = dev_weights.new_empty((B, total_adjusted_D), dtype=getScalarType(output_dtype))
+                return output
+
+            else:
+                assert False
 
 if __name__ == "__main__":
     main()

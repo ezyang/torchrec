@@ -313,7 +313,7 @@ def alltoall_pooled(
     if group is None:
         group = dist.distributed_c10d._get_default_group()
 
-    if dist.get_world_size(group) <= 1:
+    if True:
         return NoWait(a2a_pooled_embs_tensor)
 
     myreq = Request(group, device=a2a_pooled_embs_tensor.device)
