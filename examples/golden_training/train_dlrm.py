@@ -127,6 +127,8 @@ def train(
     )
     sharder = EmbeddingBagCollectionSharder(qcomm_codecs_registry=qcomm_codecs_registry)
 
+    train_model.forward = torch.compile(fullgraph=True)(train_model.forward)
+
     model = DistributedModelParallel(
         module=train_model,
         device=device,
@@ -151,8 +153,11 @@ def train(
             num_embeddings=num_embeddings,
         )
     )
-    for _ in tqdm(range(int(num_iterations)), mininterval=5.0):
-        train_pipeline.progress(train_iterator)
+
+    print(model(next(train_iterator).to(device)))
+
+    #for _ in tqdm(range(int(num_iterations)), mininterval=5.0):
+    #    train_pipeline.progress(train_iterator)
 
 
 if __name__ == "__main__":

@@ -426,7 +426,9 @@ class KJTAllToAll(nn.Module):
         assert len(splits) == pg.size()
         self._pg: dist.ProcessGroup = pg
         self._splits = splits
-        self._splits_cumsum: List[int] = [0] + list(itertools.accumulate(splits))
+        self._splits_cumsum = [0]
+        for s in splits:
+            self._splits_cumsum.append(self._splits_cumsum[-1] + s)
         self._stagger = stagger
 
     def forward(
@@ -447,7 +449,7 @@ class KJTAllToAll(nn.Module):
 
         with torch.no_grad():
             assert len(input.keys()) == sum(self._splits)
-            rank = dist.get_rank(self._pg)
+            rank = 0  #dist.get_rank(self._pg)
             local_keys = input.keys()[
                 self._splits_cumsum[rank] : self._splits_cumsum[rank + 1]
             ]

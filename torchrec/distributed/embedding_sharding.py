@@ -260,6 +260,7 @@ def _set_sharding_context(
         if isinstance(awaitable, KJTAllToAllTensorsAwaitable):
             if hasattr(sharding_context, "batch_size_per_rank"):
                 sharding_context.batch_size_per_rank = awaitable._batch_size_per_rank
+            continue
             if hasattr(sharding_context, "input_splits"):
                 sharding_context.input_splits = awaitable._input_splits["values"]
             if hasattr(sharding_context, "output_splits"):

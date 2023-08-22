@@ -698,16 +698,15 @@ class ShardedEmbeddingBagCollection(
     def compute_and_output_dist(
         self, ctx: EmbeddingBagCollectionContext, input: KJTList
     ) -> LazyAwaitable[KeyedTensor]:
+        awaitables = []
+        for i in range(len(self._lookups)):
+            lookup = self._lookups[i]
+            dist = self._output_dists[i]
+            sharding_ctx = ctx.sharding_contexts[i]
+            features = input[i]
+            awaitables.append(dist(lookup(features), sharding_ctx))
         return EmbeddingBagCollectionAwaitable(
-            awaitables=[
-                dist(lookup(features), sharding_ctx)
-                for lookup, dist, sharding_ctx, features in zip(
-                    self._lookups,
-                    self._output_dists,
-                    ctx.sharding_contexts,
-                    input,
-                )
-            ],
+            awaitables=awaitables,
             embedding_dims=self._embedding_dims,
             embedding_names=self._embedding_names,
         )
