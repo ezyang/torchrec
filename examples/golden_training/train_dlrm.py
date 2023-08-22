@@ -42,7 +42,7 @@ def _get_random_dataset(
         keys=DEFAULT_CAT_NAMES,
         batch_size=batch_size,
         hash_size=num_embeddings,
-        ids_per_feature=1,
+        ids_per_feature=3,
         num_dense=len(DEFAULT_INT_NAMES),
     )
 
@@ -154,6 +154,9 @@ def train(
         )
     )
 
+    print(model(next(train_iterator).to(device)))  # warmup, input dists
+    print(model(next(train_iterator).to(device)))
+    print(model(next(train_iterator).to(device)))
     print(model(next(train_iterator).to(device)))
 
     #for _ in tqdm(range(int(num_iterations)), mininterval=5.0):

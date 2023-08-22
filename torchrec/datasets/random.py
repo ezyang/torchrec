@@ -47,7 +47,8 @@ class _RandomRecBatch:
 
         self._generated_batches: List[Batch] = [
             self._generate_batch()
-        ] * num_generated_batches
+            for _ in range(num_generated_batches)
+        ]
         self.batch_index = 0
 
     def __iter__(self) -> "_RandomRecBatch":
@@ -72,16 +73,17 @@ class _RandomRecBatch:
         lengths = []
         for key_idx, _ in enumerate(self.keys):
             hash_size = self.hash_sizes[key_idx]
-            num_ids_in_batch = self.ids_per_features[key_idx]
-
-            values.append(
-                torch.randint(
-                    high=hash_size,
-                    size=(num_ids_in_batch * self.batch_size,),
-                    generator=self.generator,
+            max_num_ids_in_batch = self.ids_per_features[key_idx]
+            for _ in range(self.batch_size):
+                num_ids_in_batch = torch.randint(high=max_num_ids_in_batch + 1, size=(), generator=self.generator).item()
+                values.append(
+                    torch.randint(
+                        high=hash_size,
+                        size=(num_ids_in_batch,),
+                        generator=self.generator,
+                    )
                 )
-            )
-            lengths.extend([num_ids_in_batch] * self.batch_size)
+                lengths.extend([num_ids_in_batch])
 
         sparse_features = KeyedJaggedTensor.from_lengths_sync(
             keys=self.keys,
