@@ -9,6 +9,7 @@ import os
 from typing import List, Optional
 
 import torch
+import torch._dynamo.config
 from torch import distributed as dist
 from torch.distributed.elastic.multiprocessing.errors import record
 from torch.distributed.optim import (
@@ -288,6 +289,8 @@ def split_embedding_codegen_lookup_rowwise_adagrad_function_meta(
 
             else:
                 assert False
+
+torch._dynamo.config.optimize_ddp = False
 
 if __name__ == "__main__":
     main()
