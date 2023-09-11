@@ -291,7 +291,7 @@ class KJTAllToAllTensorsAwaitable(Awaitable[KeyedJaggedTensor]):
         #for awaitable in self._awaitables:
         #    awaitable.wait()
 
-        return type(self._input).dist_init(
+        return self._input.__class__.dist_init(
             keys=self._keys,
             tensors=self._output_tensors,
             batch_size_per_rank=self._batch_size_per_rank,
