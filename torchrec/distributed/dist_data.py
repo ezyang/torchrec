@@ -449,7 +449,7 @@ class KJTAllToAll(nn.Module):
 
         with torch.no_grad():
             assert len(input.keys()) == sum(self._splits)
-            rank = 0  #dist.get_rank(self._pg)
+            rank = dist.get_rank(self._pg)
             local_keys = input.keys()[
                 self._splits_cumsum[rank] : self._splits_cumsum[rank + 1]
             ]
