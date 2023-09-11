@@ -9,6 +9,7 @@ import itertools
 import logging
 from typing import Callable, Dict, List, Optional
 
+from torch.distributed._functional_collectives import all_to_all_single
 import torch
 import torch.distributed as dist
 from torch import nn
@@ -164,13 +165,20 @@ class SplitsAllToAllAwaitable(Awaitable[List[List[int]]]):
                 async_op=True,
             )
             """
-            from torch.distributed._functional_collectives import all_to_all_single
             self._output_tensor = all_to_all_single(input_tensor, None, None, group=pg)
 
     def _wait_impl(self) -> List[List[int]]:
         #self._splits_awaitable.wait()
         #return self._output_tensor.view(self.num_workers, -1).T.tolist()
         return [[x.item() for x in t.unbind()] for t in self._output_tensor.view(self.num_workers, -1).T.unbind()]
+
+def hack_tensor(val):
+    # TODO: only works with 1D right now
+    # TODO: type computation not done correctly
+    scalars = []
+    for v in val:
+        scalars.append(torch.scalar_tensor(v, dtype=torch.int64))
+    return torch.stack(scalars)
 
 
 class KJTAllToAllTensorsAwaitable(Awaitable[KeyedJaggedTensor]):
@@ -253,6 +261,7 @@ class KJTAllToAllTensorsAwaitable(Awaitable[KeyedJaggedTensor]):
                 su, device=self._device, dtype=input_tensor.dtype
             )
             with record_function(f"## all2all_data:kjt {label} ##"):
+                """
                 awaitable = dist.all_to_all_single(
                     output=output_tensor,
                     input=input_tensor,
@@ -261,9 +270,11 @@ class KJTAllToAllTensorsAwaitable(Awaitable[KeyedJaggedTensor]):
                     group=self._pg,
                     async_op=True,
                 )
+                """
+                output_tensor = all_to_all_single(input_tensor, hack_tensor(output_split), hack_tensor(input_split), self._pg)
 
             self._output_tensors.append(output_tensor)
-            self._awaitables.append(awaitable)
+            #self._awaitables.append(awaitable)
 
     def _wait_impl(self) -> KeyedJaggedTensor:
         """
@@ -277,8 +288,8 @@ class KJTAllToAllTensorsAwaitable(Awaitable[KeyedJaggedTensor]):
             self._input.sync()
             return self._input
 
-        for awaitable in self._awaitables:
-            awaitable.wait()
+        #for awaitable in self._awaitables:
+        #    awaitable.wait()
 
         return type(self._input).dist_init(
             keys=self._keys,
