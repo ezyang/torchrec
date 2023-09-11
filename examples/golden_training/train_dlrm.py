@@ -128,8 +128,6 @@ def train(
     )
     sharder = EmbeddingBagCollectionSharder(qcomm_codecs_registry=qcomm_codecs_registry)
 
-    train_model.forward = torch.compile(fullgraph=True)(train_model.forward)
-
     model = DistributedModelParallel(
         module=train_model,
         device=device,
@@ -155,7 +153,12 @@ def train(
         )
     )
 
+    # First time we run the model it does some register_buffer which Dynamo
+    # chokes on
     print(model(next(train_iterator).to(device)))  # warmup, input dists
+
+    train_model.forward = torch.compile(fullgraph=True)(train_model.forward)
+
     print(model(next(train_iterator).to(device)))
     print(model(next(train_iterator).to(device)))
     print(model(next(train_iterator).to(device)))
@@ -289,6 +292,24 @@ def split_embedding_codegen_lookup_rowwise_adagrad_function_meta(
 
             else:
                 assert False
+
+@register_meta("permute_2D_sparse_data")
+def permute_2D_sparse_data_meta(permute, lengths, values, weights=None, permuted_lengths_sum=None):
+    check(lengths.dim() == 2, lambda: "")
+    T = permute.numel()
+    B = lengths.size(1)
+    indices = values
+    permuted_lengths = lengths.new_empty([T, B])
+    permuted_indices_size = 0
+    if permuted_lengths_sum is not None:
+        permuted_indices_size = permuted_lengths_sum
+    else:
+        raise NotImplementedError("TODO: data dependent permute_2D")
+    permuted_indices = indices.new_empty(permuted_indices_size)
+    permuted_weights = None
+    if weights is not None:
+        permuted_weights = weights.new_empty(permuted_indices_size)
+    return permuted_lengths, permuted_indices, permuted_weights
 
 torch._dynamo.config.optimize_ddp = False
 
