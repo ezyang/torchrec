@@ -155,16 +155,22 @@ class SplitsAllToAllAwaitable(Awaitable[List[List[int]]]):
                 dtype=input_tensors[0].dtype,
             )
             input_tensor = torch.stack(input_tensors, dim=1).flatten()
+            """
+            # TODO: restore pipelining
             self._splits_awaitable: dist.Work = dist.all_to_all_single(
                 output=self._output_tensor,
                 input=input_tensor,
                 group=pg,
                 async_op=True,
             )
+            """
+            from torch.distributed._functional_collectives import all_to_all_single
+            self._output_tensor = all_to_all_single(input_tensor, None, None, group=pg)
 
     def _wait_impl(self) -> List[List[int]]:
-        self._splits_awaitable.wait()
-        return self._output_tensor.view(self.num_workers, -1).T.tolist()
+        #self._splits_awaitable.wait()
+        #return self._output_tensor.view(self.num_workers, -1).T.tolist()
+        return [[x.item() for x in t.unbind()] for t in self._output_tensor.view(self.num_workers, -1).T.unbind()]
 
 
 class KJTAllToAllTensorsAwaitable(Awaitable[KeyedJaggedTensor]):
@@ -221,9 +227,11 @@ class KJTAllToAllTensorsAwaitable(Awaitable[KeyedJaggedTensor]):
             num_splits=len(splits),
             stagger=stagger,
             device=device,
-            batch_size_per_rank=batch_size_per_rank
-            if len(set(batch_size_per_rank)) > 1
-            else None,
+            batch_size_per_rank=None,
+            # This might be unsolvable
+            #batch_size_per_rank
+            #if len(set(batch_size_per_rank)) > 1
+            #else None,
         )
         if self._workers == 1:
             return
@@ -237,8 +245,12 @@ class KJTAllToAllTensorsAwaitable(Awaitable[KeyedJaggedTensor]):
             input_tensors,
             labels,
         ):
+            import torch.export
+            for s in output_split:
+                torch.export.constrain_as_size(s)
+            su = sum(output_split)
             output_tensor = torch.empty(
-                sum(output_split), device=self._device, dtype=input_tensor.dtype
+                su, device=self._device, dtype=input_tensor.dtype
             )
             with record_function(f"## all2all_data:kjt {label} ##"):
                 awaitable = dist.all_to_all_single(
