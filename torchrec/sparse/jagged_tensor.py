@@ -1479,7 +1479,7 @@ class KeyedJaggedTensor(Pipelineable, metaclass=JaggedTensorMeta):
             values=values,
             weights=weights,
             lengths=lengths,
-            stride=sum(batch_size_per_rank),
+            stride=32 * len(batch_size_per_rank),
         )
         return kjt.sync()
 
