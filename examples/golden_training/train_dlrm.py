@@ -311,6 +311,25 @@ def permute_2D_sparse_data_meta(permute, lengths, values, weights=None, permuted
         permuted_weights = weights.new_empty(permuted_indices_size)
     return permuted_lengths, permuted_indices, permuted_weights
 
+
+@register_meta("permute_1D_sparse_data")
+def permute_1D_sparse_data_meta(permute, lengths, values, weights=None, permuted_lengths_sum=None):
+    indices = values
+    permuted_lengths_size = permute.numel()
+    permuted_lengths = lengths.new_empty([permuted_lengths_size])
+    permuted_indices_size = 0
+    if permuted_lengths_sum is not None:
+        permuted_indices_size = permuted_lengths_sum
+    else:
+        raise NotImplementedError("TODO: data dependent permute_1D")
+    permuted_indices = indices.new_empty(permuted_indices_size)
+    permuted_weights = None
+    if weights is not None:
+        permuted_weights = weights.new_empty(permuted_indices_size)
+    return permuted_lengths, permuted_indices, permuted_weights
+
+
+
 torch._dynamo.config.optimize_ddp = False
 
 if __name__ == "__main__":

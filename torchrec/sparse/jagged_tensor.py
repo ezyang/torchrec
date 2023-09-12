@@ -1453,6 +1453,8 @@ class KeyedJaggedTensor(Pipelineable, metaclass=JaggedTensorMeta):
                 """
                 import torch.export
                 torch.export.constrain_as_size(batch_size_per_rank[0])
+                # Dennis suggests:
+                # batch_size_per_rank == [self.stride] * world_size
                 if False:
                     lengths, values, weights = torch.ops.fbgemm.permute_2D_sparse_data(
                         recat,
@@ -1470,6 +1472,7 @@ class KeyedJaggedTensor(Pipelineable, metaclass=JaggedTensorMeta):
                         weights,
                         values.numel(),
                     )
+                    lengths = lengths.unsqueeze(1).expand(lengths.size(0), 32).contiguous().view(-1)
 
         kjt = KeyedJaggedTensor(
             keys=keys,
