@@ -11,12 +11,15 @@ from typing import Any, List, Optional, Tuple, TypeVar
 import torch
 import torch.distributed as dist
 
+import time
 from torch.distributed._functional_collectives import all_to_all_single
 from torch import Tensor
 from torch.autograd import Function
 from torch.autograd.profiler import record_function
 from torchrec.distributed.types import Awaitable, NoWait, QuantizedCommCodecs
 from torchrec.distributed.utils import none_throws
+import torch.export
+import torch._dynamo.comptime as comptime
 
 try:
     torch.ops.load_library("//deeplearning/fbgemm/fbgemm_gpu:sparse_ops")
@@ -684,6 +687,7 @@ class All2All_Pooled_Req(Function):
         dim_sum_per_rank = a2ai.dim_sum_per_rank
         batch_size_per_rank = a2ai.batch_size_per_rank
         B_local = batch_size_per_rank[my_rank]
+        torch.export.constrain_as_size(B_local)
 
         assert B_global == sum(batch_size_per_rank)
 
@@ -716,6 +720,15 @@ class All2All_Pooled_Req(Function):
             ]
             input_split_sizes = [D_local_sum * B_rank for B_rank in batch_size_per_rank]
             qcomm_ctx = None
+
+        """
+        if dist.get_rank(pg) == 0:
+            comptime.breakpoint()
+        else:
+            @comptime.comptime
+            def f(_):
+                time.sleep(999999999)
+        """
 
         sharded_output_embeddings = torch.empty(
             sum(output_split_sizes),
