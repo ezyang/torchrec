@@ -11,6 +11,7 @@ from typing import Any, List, Optional, Tuple, TypeVar
 import torch
 import torch.distributed as dist
 
+from torch.distributed._functional_collectives import all_to_all_single
 from torch import Tensor
 from torch.autograd import Function
 from torch.autograd.profiler import record_function
@@ -53,6 +54,14 @@ Some commonly used notations for comm ops:
     T - number of embedding tables
     D - embedding dimension
 """
+
+def hack_tensor(val):
+    # TODO: only works with 1D right now
+    # TODO: type computation not done correctly
+    scalars = []
+    for v in val:
+        scalars.append(torch.scalar_tensor(v, dtype=torch.int64))
+    return torch.stack(scalars)
 
 
 class Request(Awaitable[W]):
@@ -715,16 +724,13 @@ class All2All_Pooled_Req(Function):
         )
 
         with record_function("## alltoall_fwd_single ##"):
-            req = dist.all_to_all_single(
-                output=sharded_output_embeddings,
-                input=sharded_input_embeddings,
-                output_split_sizes=output_split_sizes,
-                input_split_sizes=input_split_sizes,
-                group=pg,
-                async_op=True,
+            myreq.tensor = all_to_all_single(
+                sharded_input_embeddings,
+                hack_tensor(output_split_sizes),
+                hack_tensor(input_split_sizes),
+                pg,
             )
 
-        myreq.req = req
         myreq.tensor = sharded_output_embeddings
         myreq.qcomm_ctx = qcomm_ctx
         myreq.a2ai = a2ai
@@ -741,9 +747,6 @@ class All2All_Pooled_Req(Function):
         my_rank = dist.get_rank(pg)
         myreq = ctx.myreq
         a2ai = myreq.a2ai
-        assert myreq.req is not None
-        myreq.req.wait()
-        myreq.req = None
         grad_output = myreq.tensor
         dim_sum_per_rank = a2ai.dim_sum_per_rank
         batch_size_per_rank = a2ai.batch_size_per_rank
@@ -775,8 +778,6 @@ class All2All_Pooled_Wait(Function):
         my_rank = dist.get_rank(pg)
         a2ai = myreq.a2ai
         ctx.a2ai = a2ai
-        assert myreq.req is not None
-        myreq.req.wait()
         sharded_output_embeddings = myreq.tensor
         myreq.req = None
         myreq.tensor = None
