@@ -530,7 +530,7 @@ def split_embedding_codegen_lookup_rowwise_adagrad_function(
         if pooling_mode is PoolingMode.NONE:
             assert False, "b"
         else:
-            return SplitLookupFunction_rowwise_adagrad_Op.apply(
+            r = SplitLookupFunction_rowwise_adagrad_Op.apply(
                 placeholder_autograd_tensor,
                 output_dtype,
                 dev_weights,
@@ -554,7 +554,9 @@ def split_embedding_codegen_lookup_rowwise_adagrad_function(
                 stochastic_rounding,
                 is_experimental,
                 momentum1_dev, momentum1_uvm, momentum1_placements, momentum1_offsets, eps, learning_rate, weight_decay, weight_decay_mode, max_norm
-            )[0]
+            )
+            assert isinstance(r, torch.Tensor)
+            return r
 
 
 
