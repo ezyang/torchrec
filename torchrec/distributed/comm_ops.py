@@ -354,6 +354,9 @@ def alltoall_pooled(
         cumsum_dim_sum_per_rank_tensor=cumsum_dim_sum_per_rank_tensor,
         codecs=codecs,
     )
+
+    return NoWait(All2All_Pooled_ReqWait.apply(a2ai, a2a_pooled_embs_tensor))
+
     All2All_Pooled_Req.apply(group, myreq, a2ai, a2a_pooled_embs_tensor)
     return myreq
 
@@ -810,6 +813,151 @@ class All2All_Pooled_Req(Function):
         myreq.tensor = None
         myreq.dummy_tensor = None
         return (None, None, None, grad_input)
+
+
+class All2All_Pooled_ReqWait(Function):
+    @staticmethod
+    # pyre-fixme[14]: `forward` overrides method defined in `Function` inconsistently.
+    def forward(
+        # pyre-fixme[2]: Parameter must be annotated.
+        ctx,
+        a2ai: All2AllPooledInfo,
+        input_embeddings: Tensor,
+    ) -> Tensor:
+        pg = torch.distributed.distributed_c10d._get_default_group()  # hack
+
+        my_rank = dist.get_rank(pg)
+        (B_global, D_local_sum) = input_embeddings.shape
+
+        dim_sum_per_rank = a2ai.dim_sum_per_rank
+        batch_size_per_rank = a2ai.batch_size_per_rank
+        B_local = batch_size_per_rank[my_rank]
+
+        assert B_global == sum(batch_size_per_rank)
+
+        sharded_input_embeddings = input_embeddings.view(-1)
+
+        if a2ai.codecs is not None:
+            codecs = none_throws(a2ai.codecs)
+            qcomm_ctx = codecs.forward.create_context()
+            sharded_input_embeddings = codecs.forward.encode(
+                sharded_input_embeddings,
+                qcomm_ctx,
+            )
+            output_split_sizes = [
+                codecs.forward.calc_quantized_size(
+                    B_local * D_rank_sum,
+                    qcomm_ctx,
+                )
+                for D_rank_sum in dim_sum_per_rank
+            ]
+            input_split_sizes = [
+                codecs.forward.calc_quantized_size(
+                    D_local_sum * B_rank,
+                    qcomm_ctx,
+                )
+                for B_rank in batch_size_per_rank
+            ]
+        else:
+            output_split_sizes = [
+                B_local * D_rank_sum for D_rank_sum in dim_sum_per_rank
+            ]
+            input_split_sizes = [D_local_sum * B_rank for B_rank in batch_size_per_rank]
+            qcomm_ctx = None
+
+
+        with record_function("## alltoall_fwd_single ##"):
+            sharded_output_embeddings = all_to_all_single(
+                sharded_input_embeddings,
+                output_split_sizes,
+                input_split_sizes,
+                group=pg,
+            )
+
+        if a2ai.codecs is not None:
+            codecs = none_throws(a2ai.codecs)
+            sharded_output_embeddings = codecs.forward.decode(
+                sharded_output_embeddings,
+                qcomm_ctx,
+            )
+
+        outputs_by_rank = sharded_output_embeddings.split(
+            [B_local * D_rank_sum for D_rank_sum in dim_sum_per_rank]
+        )
+        result = torch.cat(
+            [output.view(B_local, -1) for output in outputs_by_rank], dim=1
+        )
+        return result
+
+
+    @staticmethod
+    def backward(ctx, grad_output) -> Tensor:
+        pg = torch.distributed.distributed_c10d._get_default_group()  # hack
+        my_rank = dist.get_rank(pg)
+        a2ai = myreq.a2ai
+        # TODO: make the thing after sync
+        dim_sum_per_rank = a2ai.dim_sum_per_rank
+        batch_size_per_rank = a2ai.batch_size_per_rank
+        D_local_sum = dim_sum_per_rank[my_rank]
+        (B_local, D_global_sum) = grad_output.shape
+
+        sharded_grad_output = _recat_pooled_embedding_grad_out(
+            grad_output.contiguous(),
+            dim_sum_per_rank,
+        )
+
+        if a2ai.codecs is not None:
+            codecs = none_throws(a2ai.codecs)
+            qcomm_ctx = codecs.backward.create_context()
+            sharded_grad_output = codecs.backward.encode(
+                sharded_grad_output,
+                qcomm_ctx,
+            )
+            input_split_sizes = [
+                codecs.backward.calc_quantized_size(
+                    B_local * D_rank_sum,
+                    qcomm_ctx,
+                )
+                for D_rank_sum in dim_sum_per_rank
+            ]
+            output_split_sizes = [
+                codecs.backward.calc_quantized_size(
+                    D_local_sum * B_rank,
+                    qcomm_ctx,
+                )
+                for B_rank in batch_size_per_rank
+            ]
+        else:
+            qcomm_ctx = None
+            input_split_sizes = [
+                B_local * D_rank_sum for D_rank_sum in dim_sum_per_rank
+            ]
+            output_split_sizes = [
+                D_local_sum * B_rank for B_rank in batch_size_per_rank
+            ]
+
+        with record_function("## alltoall_bwd_single ##"):
+            sharded_grad_input = all_to_all_single(
+                sharded_grad_output,
+                output_split_sizes,
+                input_split_sizes,
+                group=pg,
+            )
+
+        # backwards for Req
+
+        grad_output = sharded_grad_input
+
+        B_global = sum(batch_size_per_rank)
+        if a2ai.codecs is not None:
+            codecs = none_throws(a2ai.codecs)
+            grad_input = codecs.backward.decode(grad_output, qcomm_ctx)
+            grad_input = grad_input.view(B_global, D_local_sum)
+        else:
+            grad_input = grad_output.view(B_global, D_local_sum)
+        if GRADIENT_DIVISION:
+            grad_input.div_(dist.get_world_size(pg))
+        return grad_input
 
 
 class All2All_Pooled_Wait(Function):
