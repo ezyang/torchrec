@@ -355,7 +355,7 @@ def alltoall_pooled(
         codecs=codecs,
     )
 
-    return NoWait(All2All_Pooled_ReqWait.apply(a2ai, a2a_pooled_embs_tensor))
+    return NoWait(All2All_Pooled_ReqWait.apply(a2a_pooled_embs_tensor, *dim_sum_per_rank, *batch_size_per_rank))
 
     All2All_Pooled_Req.apply(group, myreq, a2ai, a2a_pooled_embs_tensor)
     return myreq
@@ -798,8 +798,8 @@ class All2All_Pooled_Req(Function):
         myreq = ctx.myreq
         a2ai = myreq.a2ai
         grad_output = myreq.tensor
-        dim_sum_per_rank = a2ai.dim_sum_per_rank
-        batch_size_per_rank = a2ai.batch_size_per_rank
+        dim_sum_per_rank = ctx.dim_sum_per_rank = a2ai.dim_sum_per_rank
+        batch_size_per_rank = ctx.batch_size_per_rank = a2ai.batch_size_per_rank
         D_local_sum = dim_sum_per_rank[my_rank]
         B_global = sum(batch_size_per_rank)
         if a2ai.codecs is not None:
@@ -821,23 +821,24 @@ class All2All_Pooled_ReqWait(Function):
     def forward(
         # pyre-fixme[2]: Parameter must be annotated.
         ctx,
-        a2ai: All2AllPooledInfo,
         input_embeddings: Tensor,
+        *args,
     ) -> Tensor:
         pg = torch.distributed.distributed_c10d._get_default_group()  # hack
+
+        dim_sum_per_rank = ctx.dim_sum_per_rank = args[0:len(args)//2]
+        batch_size_per_rank = ctx.batch_size_per_rank = args[len(args)//2:]
 
         my_rank = dist.get_rank(pg)
         (B_global, D_local_sum) = input_embeddings.shape
 
-        dim_sum_per_rank = a2ai.dim_sum_per_rank
-        batch_size_per_rank = a2ai.batch_size_per_rank
         B_local = batch_size_per_rank[my_rank]
 
         assert B_global == sum(batch_size_per_rank)
 
         sharded_input_embeddings = input_embeddings.view(-1)
 
-        if a2ai.codecs is not None:
+        if False:
             codecs = none_throws(a2ai.codecs)
             qcomm_ctx = codecs.forward.create_context()
             sharded_input_embeddings = codecs.forward.encode(
@@ -874,7 +875,7 @@ class All2All_Pooled_ReqWait(Function):
                 group=pg,
             )
 
-        if a2ai.codecs is not None:
+        if False:
             codecs = none_throws(a2ai.codecs)
             sharded_output_embeddings = codecs.forward.decode(
                 sharded_output_embeddings,
@@ -894,10 +895,9 @@ class All2All_Pooled_ReqWait(Function):
     def backward(ctx, grad_output) -> Tensor:
         pg = torch.distributed.distributed_c10d._get_default_group()  # hack
         my_rank = dist.get_rank(pg)
-        a2ai = myreq.a2ai
         # TODO: make the thing after sync
-        dim_sum_per_rank = a2ai.dim_sum_per_rank
-        batch_size_per_rank = a2ai.batch_size_per_rank
+        dim_sum_per_rank = ctx.dim_sum_per_rank
+        batch_size_per_rank = ctx.batch_size_per_rank
         D_local_sum = dim_sum_per_rank[my_rank]
         (B_local, D_global_sum) = grad_output.shape
 
@@ -906,7 +906,7 @@ class All2All_Pooled_ReqWait(Function):
             dim_sum_per_rank,
         )
 
-        if a2ai.codecs is not None:
+        if False:
             codecs = none_throws(a2ai.codecs)
             qcomm_ctx = codecs.backward.create_context()
             sharded_grad_output = codecs.backward.encode(
@@ -949,7 +949,7 @@ class All2All_Pooled_ReqWait(Function):
         grad_output = sharded_grad_input
 
         B_global = sum(batch_size_per_rank)
-        if a2ai.codecs is not None:
+        if False:
             codecs = none_throws(a2ai.codecs)
             grad_input = codecs.backward.decode(grad_output, qcomm_ctx)
             grad_input = grad_input.view(B_global, D_local_sum)
