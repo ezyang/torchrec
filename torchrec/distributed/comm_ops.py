@@ -20,6 +20,7 @@ from torchrec.distributed.types import Awaitable, NoWait, QuantizedCommCodecs
 from torchrec.distributed.utils import none_throws
 import torch.export
 import torch._dynamo.comptime as comptime
+import torch._dynamo
 
 try:
     torch.ops.load_library("//deeplearning/fbgemm/fbgemm_gpu:sparse_ops")
@@ -355,10 +356,15 @@ def alltoall_pooled(
         codecs=codecs,
     )
 
-    return NoWait(All2All_Pooled_ReqWait.apply(a2a_pooled_embs_tensor, *dim_sum_per_rank, *batch_size_per_rank))
+    return NoWait(all2all_pooled_reqwait(a2a_pooled_embs_tensor, dim_sum_per_rank, batch_size_per_rank))
 
     All2All_Pooled_Req.apply(group, myreq, a2ai, a2a_pooled_embs_tensor)
     return myreq
+
+
+@torch._dynamo.allow_in_graph
+def all2all_pooled_reqwait(a2a_pooled_embs_tensor, dim_sum_per_rank, batch_size_per_rank):
+    return All2All_Pooled_ReqWait.apply(a2a_pooled_embs_tensor, *dim_sum_per_rank, *batch_size_per_rank)
 
 
 def variable_batch_alltoall_pooled(
