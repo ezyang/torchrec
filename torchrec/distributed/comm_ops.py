@@ -356,7 +356,7 @@ def alltoall_pooled(
         codecs=codecs,
     )
 
-    return all2all_pooled_reqwait(a2a_pooled_embs_tensor, dim_sum_per_rank, batch_size_per_rank)
+    return NoWait(all2all_pooled_reqwait(a2a_pooled_embs_tensor, dim_sum_per_rank, batch_size_per_rank))
 
     All2All_Pooled_Req.apply(group, myreq, a2ai, a2a_pooled_embs_tensor)
     return myreq
