@@ -6,7 +6,7 @@
 # LICENSE file in the root directory of this source tree.
 
 from dataclasses import dataclass, field
-from typing import Any, List, Optional, Tuple, TypeVar
+from typing import Any, List, Optional, Tuple, TypeVar, Callable
 
 import torch
 import torch.distributed as dist
@@ -356,7 +356,7 @@ def alltoall_pooled(
         codecs=codecs,
     )
 
-    return NoWait(all2all_pooled_reqwait(a2a_pooled_embs_tensor, dim_sum_per_rank, batch_size_per_rank))
+    return all2all_pooled_reqwait(a2a_pooled_embs_tensor, dim_sum_per_rank, batch_size_per_rank)
 
     All2All_Pooled_Req.apply(group, myreq, a2ai, a2a_pooled_embs_tensor)
     return myreq
@@ -364,8 +364,138 @@ def alltoall_pooled(
 
 @torch._dynamo.allow_in_graph
 def all2all_pooled_reqwait(a2a_pooled_embs_tensor, dim_sum_per_rank, batch_size_per_rank):
-    return All2All_Pooled_ReqWait.apply(a2a_pooled_embs_tensor, *dim_sum_per_rank, *batch_size_per_rank)
+    #return All2All_Pooled_ReqWait.apply(a2a_pooled_embs_tensor, *dim_sum_per_rank, *batch_size_per_rank)
+    pg = torch.distributed.distributed_c10d._get_default_group()  # hack
 
+    input_embeddings = a2a_pooled_embs_tensor
+
+    my_rank = dist.get_rank(pg)
+    (B_global, D_local_sum) = input_embeddings.shape
+
+    B_local = batch_size_per_rank[my_rank]
+
+    assert B_global == sum(batch_size_per_rank)
+
+    sharded_input_embeddings = input_embeddings.view(-1)
+
+    if False:
+        codecs = none_throws(a2ai.codecs)
+        qcomm_ctx = codecs.forward.create_context()
+        sharded_input_embeddings = codecs.forward.encode(
+            sharded_input_embeddings,
+            qcomm_ctx,
+        )
+        output_split_sizes = [
+            codecs.forward.calc_quantized_size(
+                B_local * D_rank_sum,
+                qcomm_ctx,
+            )
+            for D_rank_sum in dim_sum_per_rank
+        ]
+        input_split_sizes = [
+            codecs.forward.calc_quantized_size(
+                D_local_sum * B_rank,
+                qcomm_ctx,
+            )
+            for B_rank in batch_size_per_rank
+        ]
+    else:
+        output_split_sizes = [
+            B_local * D_rank_sum for D_rank_sum in dim_sum_per_rank
+        ]
+        input_split_sizes = [D_local_sum * B_rank for B_rank in batch_size_per_rank]
+        qcomm_ctx = None
+
+
+    with record_function("## alltoall_fwd_single ##"):
+        sharded_output_embeddings = all_to_all_single(
+            sharded_input_embeddings,
+            output_split_sizes,
+            input_split_sizes,
+            group=pg,
+        )
+
+    if False:
+        codecs = none_throws(a2ai.codecs)
+        sharded_output_embeddings = codecs.forward.decode(
+            sharded_output_embeddings,
+            qcomm_ctx,
+        )
+
+
+
+    outputs_by_rank = sharded_output_embeddings.split(
+        [B_local * D_rank_sum for D_rank_sum in dim_sum_per_rank]
+    )
+    result = torch.cat(
+        [output.view(B_local, -1) for output in outputs_by_rank], dim=1
+    )
+    return result
+
+
+from torch._subclasses.fake_tensor import FakeTensor
+from torch.utils._pytree import tree_map_only
+
+
+class PropagatingAsyncCollectiveTensor(torch.Tensor):
+    r"""
+    A Tensor wrapper subclass that is used to trigger a call to wait
+    prior to first use of the underlying tensor.
+    Use it inside functional collective pytorch wrappers like the following:
+    def functional_collective(self, group, tag):
+        tag, rankset, group_size = _expand_group(group, tag)
+        tensor = torch.ops.c10d_functional.{collective}(self, tag, rankset, group_size)
+        return _maybe_wrap_tensor(tensor)
+    """
+    elem: Callable[[], torch.Tensor]
+    fake_elem: FakeTensor
+
+    __slots__ = ['elem']
+
+    __torch_function__ = torch._C._disabled_torch_function_impl
+
+    @staticmethod
+    def __new__(cls, elem: Callable[[], torch.Tensor], fake_elem: FakeTensor):
+
+        r = torch.Tensor._make_wrapper_subclass(  # type: ignore[attr-defined]
+            cls, fake_elem.size(),
+            strides=fake_elem.stride(), storage_offset=fake_elem.storage_offset(),
+            dtype=fake_elem.dtype, layout=fake_elem.layout,
+            device=fake_elem.device, requires_grad=False
+        )
+        r.elem = elem
+        r.fake_elem = fake_elem
+        return r
+
+    def tolist(self):
+        return self.elem().tolist()
+
+    def __repr__(self):
+        return f"PropagatingAsyncCollectiveTensor({self.fake_elem})"
+
+    def trigger_wait(self):
+        return self.elem()
+
+    @classmethod
+    def __torch_dispatch__(cls, func, types, args=(), kwargs=None):
+        def fake_unwrap(e: PropagatingAsyncCollectiveTensor):
+            return e.fake_elem
+
+        def unwrap(e: PropagatingAsyncCollectiveTensor):
+            return e.elem()
+
+        kwargs = kwargs if kwargs else {}
+
+        fake_unwrapped_args = tree_map_only(PropagatingAsyncCollectiveTensor, fake_unwrap, args)
+        fake_unwrapped_kwargs = tree_map_only(PropagatingAsyncCollectiveTensor, fake_unwrap, kwargs)
+
+        # we don't wrap the result as it doesn't need to be waited on.
+        fake_out = func(*fake_unwrapped_args, **fake_unwrapped_kwargs)
+
+        return PropagatingAsyncCollectiveTensor(
+            lambda: func(*tree_map_only(PropagatingAsyncCollectiveTensor, unwrap, args), **tree_map_only(PropagatingAsyncCollectiveTensor, unwrap, kwargs)),
+            fake_out,
+        )
 
 def variable_batch_alltoall_pooled(
     a2a_pooled_embs_tensor: Tensor,
