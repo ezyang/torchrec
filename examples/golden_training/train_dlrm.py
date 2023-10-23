@@ -35,6 +35,9 @@ from torchrec.optim.optimizers import in_backward_optimizer_filter
 from torchrec.optim.rowwise_adagrad import RowWiseAdagrad
 from tqdm import tqdm
 
+import logging
+torch_log = logging.getLogger("torch")
+
 
 def _get_random_dataset(
     num_embeddings: int,
@@ -153,6 +156,20 @@ def train(
             num_embeddings=num_embeddings,
         )
     )
+
+    torch_log.warning("1")
+    train_pipeline.progress(train_iterator)
+
+    train_model.forward = torch.compile(fullgraph=True, backend="eager")(train_model.forward)
+
+    torch_log.warning("2")
+    train_pipeline.progress(train_iterator)
+    torch_log.warning("3")
+    train_pipeline.progress(train_iterator)
+    torch_log.warning("4")
+    train_pipeline.progress(train_iterator)
+
+    return
 
     # First time we run the model it does some register_buffer which Dynamo
     # chokes on

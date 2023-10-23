@@ -453,12 +453,16 @@ class PipelinedForward(BaseForward):
         assert self._name in self._context.input_dist_tensors_requests
         request = self._context.input_dist_tensors_requests[self._name]
         assert isinstance(request, Awaitable)
+        """
         with record_function("## wait_sparse_data_dist ##"):
             # Finish waiting on the dist_stream,
             # in case some delayed stream scheduling happens during the wait() call.
             with torch.cuda.stream(self._stream):
                 data = request.wait()
+        """
+        data = request.wait()
 
+        """
         # Make sure that both result of input_dist and context
         # are properly transferred to the current stream.
         if self._stream is not None:
@@ -473,6 +477,7 @@ class PipelinedForward(BaseForward):
 
             ctx = self._context.module_contexts[self._name]
             ctx.record_stream(cur_stream)
+        """
 
         return self._module.compute_and_output_dist(
             self._context.module_contexts[self._name], data
