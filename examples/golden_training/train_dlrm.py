@@ -160,7 +160,7 @@ def train(
     torch_log.warning("1")
     train_pipeline.progress(train_iterator)
 
-    train_model.forward = torch.compile(fullgraph=True, backend="eager")(train_model.forward)
+    train_model.forward = torch.compile(fullgraph=True, backend="aot_eager")(train_model.forward)
 
     torch_log.warning("2")
     train_pipeline.progress(train_iterator)
@@ -168,18 +168,6 @@ def train(
     train_pipeline.progress(train_iterator)
     torch_log.warning("4")
     train_pipeline.progress(train_iterator)
-
-    return
-
-    # First time we run the model it does some register_buffer which Dynamo
-    # chokes on
-    print(model(next(train_iterator).to(device)))  # warmup, input dists
-
-    train_model.forward = torch.compile(fullgraph=True, backend="eager")(train_model.forward)
-
-    print(model(next(train_iterator).to(device)))
-    print(model(next(train_iterator).to(device)))
-    print(model(next(train_iterator).to(device)))
 
     #for _ in tqdm(range(int(num_iterations)), mininterval=5.0):
     #    train_pipeline.progress(train_iterator)

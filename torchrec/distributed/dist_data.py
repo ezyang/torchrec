@@ -179,7 +179,7 @@ class SplitsAllToAllAwaitable(Awaitable[List[List[int]]]):
         rs = self._output_tensor.view(self.num_workers, -1).T.tolist()
         for r in rs:
             for s in r:
-                torch.export.constrain_as_size(s)
+                torch._check_is_size(s)
         return rs
 
 
@@ -252,7 +252,7 @@ class KJTAllToAllTensorsAwaitable(Awaitable[KeyedJaggedTensor]):
             labels,
         ):
             for s in output_split:
-                torch.export.constrain_as_size(s)
+                torch._check_is_size(s)
             output_tensor = torch.empty(
                 sum(output_split), device=self._device, dtype=input_tensor.dtype
             )
