@@ -356,26 +356,28 @@ def alltoall_pooled(
         codecs=codecs,
     )
 
-    return NoWait(all2all_pooled_reqwait(group, a2a_pooled_embs_tensor, dim_sum_per_rank, batch_size_per_rank))
+    return NoWait(all2all_pooled_reqwait(group, a2ai, a2a_pooled_embs_tensor))
 
     All2All_Pooled_Req.apply(group, myreq, a2ai, a2a_pooled_embs_tensor)
     return myreq
 
 
-def all2all_pooled_reqwait(group, a2a_pooled_embs_tensor, dim_sum_per_rank, batch_size_per_rank):
+def all2all_pooled_reqwait(group, a2ai, a2a_pooled_embs_tensor):
     pg = group
     input_embeddings = a2a_pooled_embs_tensor
 
     my_rank = dist.get_rank(pg)
     (B_global, D_local_sum) = input_embeddings.shape
 
+    dim_sum_per_rank = a2ai.dim_sum_per_rank
+    batch_size_per_rank = a2ai.batch_size_per_rank
     B_local = batch_size_per_rank[my_rank]
 
     assert B_global == sum(batch_size_per_rank)
 
     sharded_input_embeddings = input_embeddings.view(-1)
 
-    if False:
+    if a2ai.codecs is not None:
         codecs = none_throws(a2ai.codecs)
         qcomm_ctx = codecs.forward.create_context()
         sharded_input_embeddings = codecs.forward.encode(
@@ -412,14 +414,12 @@ def all2all_pooled_reqwait(group, a2a_pooled_embs_tensor, dim_sum_per_rank, batc
             group=pg,
         )
 
-    if False:
+    if a2ai.codecs is not None:
         codecs = none_throws(a2ai.codecs)
         sharded_output_embeddings = codecs.forward.decode(
             sharded_output_embeddings,
             qcomm_ctx,
         )
-
-
 
     outputs_by_rank = sharded_output_embeddings.split(
         [B_local * D_rank_sum for D_rank_sum in dim_sum_per_rank]
