@@ -356,17 +356,14 @@ def alltoall_pooled(
         codecs=codecs,
     )
 
-    return NoWait(all2all_pooled_reqwait(a2a_pooled_embs_tensor, dim_sum_per_rank, batch_size_per_rank))
+    return NoWait(all2all_pooled_reqwait(group, a2a_pooled_embs_tensor, dim_sum_per_rank, batch_size_per_rank))
 
     All2All_Pooled_Req.apply(group, myreq, a2ai, a2a_pooled_embs_tensor)
     return myreq
 
 
-@torch._dynamo.allow_in_graph
-def all2all_pooled_reqwait(a2a_pooled_embs_tensor, dim_sum_per_rank, batch_size_per_rank):
-    #return All2All_Pooled_ReqWait.apply(a2a_pooled_embs_tensor, *dim_sum_per_rank, *batch_size_per_rank)
-    pg = torch.distributed.distributed_c10d._get_default_group()  # hack
-
+def all2all_pooled_reqwait(group, a2a_pooled_embs_tensor, dim_sum_per_rank, batch_size_per_rank):
+    pg = group
     input_embeddings = a2a_pooled_embs_tensor
 
     my_rank = dist.get_rank(pg)
