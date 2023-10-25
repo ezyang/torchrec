@@ -157,10 +157,12 @@ def train(
         )
     )
 
+    # warmup
+
     torch_log.warning("1")
     train_pipeline.progress(train_iterator)
 
-    train_model.forward = torch.compile(fullgraph=True, backend="aot_eager")(train_model.forward)
+    train_model.forward = torch.compile(fullgraph=True, backend="inductor")(train_model.forward)
 
     torch_log.warning("2")
     train_pipeline.progress(train_iterator)
@@ -169,8 +171,8 @@ def train(
     torch_log.warning("4")
     train_pipeline.progress(train_iterator)
 
-    #for _ in tqdm(range(int(num_iterations)), mininterval=5.0):
-    #    train_pipeline.progress(train_iterator)
+    for _ in tqdm(range(int(num_iterations)), mininterval=5.0):
+        train_pipeline.progress(train_iterator)
 
 import torch.library
 fbgemm_meta_lib = torch.library.Library("fbgemm", "IMPL", "Meta")
@@ -298,51 +300,6 @@ def split_embedding_codegen_lookup_rowwise_adagrad_function_meta(
 
             else:
                 assert False
-
-@register_meta("permute_2D_sparse_data")
-def permute_2D_sparse_data_meta(permute, lengths, values, weights=None, permuted_lengths_sum=None):
-    check(lengths.dim() == 2, lambda: "")
-    T = permute.numel()
-    B = lengths.size(1)
-    indices = values
-    permuted_lengths = lengths.new_empty([T, B])
-    permuted_indices_size = 0
-    if permuted_lengths_sum is not None:
-        permuted_indices_size = permuted_lengths_sum
-    else:
-        raise NotImplementedError("TODO: data dependent permute_2D")
-    permuted_indices = indices.new_empty(permuted_indices_size)
-    permuted_weights = None
-    if weights is not None:
-        permuted_weights = weights.new_empty(permuted_indices_size)
-    return permuted_lengths, permuted_indices, permuted_weights
-
-
-@register_meta("permute_1D_sparse_data")
-def permute_1D_sparse_data_meta(permute, lengths, values, weights=None, permuted_lengths_sum=None):
-    indices = values
-    permuted_lengths_size = permute.numel()
-    permuted_lengths = lengths.new_empty([permuted_lengths_size])
-    permuted_indices_size = 0
-    if permuted_lengths_sum is not None:
-        permuted_indices_size = permuted_lengths_sum
-    else:
-        raise NotImplementedError("TODO: data dependent permute_1D")
-    permuted_indices = indices.new_empty(permuted_indices_size)
-    permuted_weights = None
-    if weights is not None:
-        permuted_weights = weights.new_empty(permuted_indices_size)
-    return permuted_lengths, permuted_indices, permuted_weights
-
-
-@register_meta("expand_into_jagged_permute")
-def expand_into_jagged_permute_meta(permute, input_offsets, output_offsets, output_size):
-    torch._check(permute.numel() > 0, lambda: "")
-    torch._check(permute.numel() == input_offsets.numel() - 1, lambda: "")
-    torch._check(permute.numel() == output_offsets.numel() - 1, lambda: "")
-    output_permute = input_offsets.new_empty(output_size)
-    return output_permute
-
 
 DEFAULT_INFO_NUM_BITS = 32
 DEFAULT_INFO_B_NUM_BITS = 26
